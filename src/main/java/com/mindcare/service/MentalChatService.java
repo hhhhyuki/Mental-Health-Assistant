@@ -1,5 +1,6 @@
 package com.mindcare.service;
 
+import com.mindcare.dto.ChatStreamResult;
 import com.mindcare.dto.EmotionResult;
 import com.mindcare.dto.ChatResponse;
 import com.mindcare.entity.ChatMessage;
@@ -7,6 +8,7 @@ import com.mindcare.repository.ChatHistoryRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import reactor.core.publisher.Flux;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -71,6 +73,38 @@ public class MentalChatService {
         }
 
         return new ChatResponse(reply, fused.getLabel(), fused.getScore(), riskLevel);
+    }
+
+    public ChatStreamResult streamChat(String text, Long userId, String anonymousId) {
+        EmotionResult textEmotion = emotionService.analyzeText(text);
+        EmotionResult fused = fusionEngine.fuse(List.of(textEmotion));
+        String riskLevel = determineRiskLevel(fused.getScore(), fused.getLabel(), text);
+
+        Flux<String> tokenStream = ragService.streamResponse(text, fused.getLabel(), riskLevel);
+
+        return new ChatStreamResult(fused.getLabel(), fused.getScore(), riskLevel, tokenStream);
+    }
+
+    public void saveChatRecord(String text, String reply, String emotionLabel,
+                                double emotionScore, String riskLevel,
+                                Long userId, String anonymousId) {
+        ChatMessage userMsg = new ChatMessage(userId, "user", text);
+        userMsg.setAnonymousId(anonymousId);
+        userMsg.setEmotionLabel(emotionLabel);
+        userMsg.setEmotionScore(emotionScore);
+        userMsg.setRiskLevel(riskLevel);
+        chatHistoryRepo.save(userMsg);
+
+        ChatMessage botMsg = new ChatMessage(userId, "assistant", reply);
+        botMsg.setAnonymousId(anonymousId);
+        chatHistoryRepo.save(botMsg);
+
+        if (!"NONE".equals(riskLevel)) {
+            mcpService.writeRecordToExcel(
+                anonymousId != null ? anonymousId : String.valueOf(userId),
+                text, emotionLabel, riskLevel
+            );
+        }
     }
 
     private String determineRiskLevel(double score, String label, String text) {

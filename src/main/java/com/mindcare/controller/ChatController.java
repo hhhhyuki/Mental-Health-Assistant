@@ -2,6 +2,7 @@ package com.mindcare.controller;
 
 import com.mindcare.dto.ChatRequest;
 import com.mindcare.dto.ChatResponse;
+import com.mindcare.dto.ChatStreamResult;
 import com.mindcare.service.MentalChatService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -10,7 +11,6 @@ import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
 
-import java.time.Duration;
 import java.time.LocalDateTime;
 
 @RestController
@@ -39,26 +39,38 @@ public class ChatController {
     public Flux<ServerSentEvent<String>> chatStream(@RequestBody ChatRequest request) {
         log.info("Stream chat request from user: {}", request.getUserId());
 
-        ChatResponse response = mentalChatService.processChat(
+        ChatStreamResult streamResult = mentalChatService.streamChat(
             request.getText(),
             request.getUserId(),
             request.getAnonymousId()
         );
 
-        String fullReply = response.getReply();
-        String[] words = fullReply.split("");
+        StringBuilder fullReply = new StringBuilder();
 
-        return Flux.fromArray(words)
-            .delayElements(Duration.ofMillis(50))
+        return streamResult.getTokenStream()
+            .doOnNext(fullReply::append)
             .map(token -> ServerSentEvent.<String>builder()
                 .event("message")
                 .data(token)
                 .build())
+            .doOnComplete(() -> {
+                mentalChatService.saveChatRecord(
+                    request.getText(),
+                    fullReply.toString(),
+                    streamResult.getEmotionLabel(),
+                    streamResult.getEmotionScore(),
+                    streamResult.getRiskLevel(),
+                    request.getUserId(),
+                    request.getAnonymousId()
+                );
+                log.info("Stream completed for user {}", request.getUserId());
+            })
             .concatWithValues(
                 ServerSentEvent.<String>builder()
                     .event("emotion")
                     .data(String.format("{\"label\":\"%s\",\"score\":%.2f,\"risk\":\"%s\"}",
-                        response.getEmotionLabel(), response.getEmotionScore(), response.getRiskLevel()))
+                        streamResult.getEmotionLabel(), streamResult.getEmotionScore(),
+                        streamResult.getRiskLevel()))
                     .build(),
                 ServerSentEvent.<String>builder()
                     .event("end")
