@@ -54,8 +54,12 @@ public class KnowledgeBaseLoader implements CommandLineRunner {
         }
 
         if (!allChunks.isEmpty()) {
-            vectorStore.add(allChunks);
-            log.info("Knowledge base loaded: {} chunks from {} files", allChunks.size(), knowledgeResources.length);
+            try {
+                vectorStore.add(allChunks);
+                log.info("Knowledge base loaded: {} chunks from {} files", allChunks.size(), knowledgeResources.length);
+            } catch (Exception e) {
+                log.warn("Failed to embed knowledge base into vector store (Ollama embedding may have timed out). App will start without knowledge retrieval: {}", e.getMessage());
+            }
         } else {
             log.warn("No knowledge base documents loaded");
         }
